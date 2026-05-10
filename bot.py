@@ -45,7 +45,7 @@ TELEGRAM_CHANNEL   = os.environ["TELEGRAM_CHANNEL_ID"]
 # Limita /briefing e chat ao dono do bot. Deixa "" para aceitar toda a gente.
 ADMIN_TELEGRAM_ID  = os.environ.get("TELEGRAM_ADMIN_ID", "")
 
-MODEL_BRIEFING = "claude-sonnet-4-6"
+MODEL_BRIEFING = "claude-haiku-4-5-20251001"
 MODEL_CHAT     = "claude-haiku-4-5-20251001"
 
 # Histórico de conversa por utilizador (últimas N trocas)
@@ -161,15 +161,25 @@ Output ONLY raw JSON, starting with {{ and ending with }}:
         "content": "Search for today's most significant news. For each of the 6 categories, use the quality sources listed. After all searches, return only the JSON briefing."
     }]
 
-    for iteration in range(20):
+    for iteration in range(8):
         log.info(f"  [loop {iteration}] calling API...")
-        response = client.messages.create(
-            model=MODEL_BRIEFING,
-            max_tokens=4000,
-            system=system,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=messages,
-        )
+        import time as _time
+        for _attempt in range(4):
+            try:
+                response = client.messages.create(
+                    model=MODEL_BRIEFING,
+                    max_tokens=2000,
+                    system=system,
+                    tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                    messages=messages,
+                )
+                break
+            except anthropic.RateLimitError:
+                if _attempt < 3:
+                    log.warning(f"Rate limit — aguardando 20s (tentativa {_attempt+1}/3)...")
+                    _time.sleep(20)
+                else:
+                    raise
         log.info(f"  [loop {iteration}] stop_reason={response.stop_reason}")
 
         if response.stop_reason == "end_turn":

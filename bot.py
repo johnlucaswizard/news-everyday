@@ -178,8 +178,14 @@ Output ONLY raw JSON, starting with {{ and ending with }}:
                     parsed = extract_json(block.text)
                     if parsed:
                         return parsed
-                    raise RuntimeError(f"JSON inválido:\n{block.text[:300]}")
-            raise RuntimeError("end_turn sem bloco de texto.")
+                    # Model returned narrative instead of JSON — ask explicitly
+                    log.info("  end_turn but no JSON — asking again...")
+                    messages.append({"role":"assistant","content":[block_to_dict(b) for b in response.content]})
+                    messages.append({"role":"user","content":[{"type":"text","text":"Return ONLY the JSON object now. No explanations. Start with { and end with }."}]})
+                    break  # continue outer loop
+            else:
+                raise RuntimeError("end_turn sem bloco de texto.")
+            continue
 
         if response.stop_reason == "tool_use":
             messages.append({"role":"assistant","content":[block_to_dict(b) for b in response.content]})

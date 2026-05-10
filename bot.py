@@ -238,27 +238,52 @@ Output ONLY the JSON."""
 
 # ── TELEGRAM FORMATTING ───────────────────────────────────────
 IMP_DOT = {"high":"🔴","medium":"🟡","low":"⚪"}
+DIVIDER = "─" * 28
 
 def format_messages(briefing: dict) -> list[str]:
-    msgs = []
-    msgs.append(
+    """Máximo 2 mensagens Telegram — todas as categorias num bloco limpo."""
+    header = (
         f"📰 <b>BRIEFING DIÁRIO</b>\n"
-        f"<i>{briefing['date']}</i>\n\n"
-        f"<blockquote>{briefing['headline']}</blockquote>"
+        f"<i>{briefing['date']}</i>\n"
+        f"{DIVIDER}\n"
+        f"<blockquote>{briefing['headline']}</blockquote>\n"
     )
+
+    cat_blocks = []
     for cat in briefing["categories"]:
-        lines = [f"{cat['emoji']} <b>{cat['name']}</b>\n"]
+        lines = [f"\n{cat['emoji']} <b>{cat['name'].upper()}</b>"]
         for item in cat["items"]:
-            dot = IMP_DOT.get(item.get("importance","low"),"⚪")
-            url = item.get("url","")
-            source_text = f'<a href="{url}">{item["source"]}</a>' if url else f'<code>{item["source"]}</code>'
-            lines.append(f'{dot} <b>{item["title"]}</b>')
-            lines.append(f'<i>{item["summary"]}</i>')
-            lines.append(f'{source_text}\n')
-        msg = "\n".join(lines)
-        msgs.append(msg[:4000] + ("…" if len(msg) > 4000 else ""))
-    msgs.append(f"⏰ <i>Gerado automaticamente · {briefing['date']}</i>")
-    return msgs
+            dot = IMP_DOT.get(item.get("importance","low"), "⚪")
+            url  = item.get("url","")
+            src  = f'<a href="{url}">{item["source"]}</a>' if url else item["source"]
+            lines.append(
+                f'{dot} <b>{item["title"]}</b>\n'
+                f'<i>{item["summary"]}</i>\n'
+                f'↗ {src}'
+            )
+        cat_blocks.append("\n".join(lines))
+
+    footer = f"\n{DIVIDER}\n⏰ <i>Gerado automaticamente · {briefing['date']}</i>"
+
+    LIMIT = 4000
+    messages = []
+    current = header
+
+    for block in cat_blocks:
+        if len(current + block) > LIMIT:
+            messages.append(current.strip())
+            current = block
+        else:
+            current += block
+
+    if len(current + footer) <= LIMIT:
+        current += footer
+    else:
+        messages.append(current.strip())
+        current = footer.strip()
+
+    messages.append(current.strip())
+    return messages
 
 def briefing_to_context(briefing: dict) -> str:
     """Comprime o briefing num bloco de texto para contexto do chat."""
@@ -387,22 +412,8 @@ async def send_daily_briefing(bot: Bot):
             pass
 
 # ── MAIN ──────────────────────────────────────────────────────
-def main():
-    log.info("🚀 A iniciar Briefing Diário Bot...")
-
-    app = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .build()
-    )
-
-    # Handlers
-    app.add_handler(CommandHandler("start",    cmd_start))
-    app.add_handler(CommandHandler("briefing", cmd_briefing))
-    app.add_handler(CommandHandler("hoje",     cmd_briefing))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
-
-    # Scheduler — cron às 7h Lisboa (6h UTC)
+async def post_init(app: Application) -> None:
+    """Iniciado dentro do event loop — sítio certo para o scheduler."""
     scheduler = AsyncIOScheduler(timezone="Europe/Lisbon")
     scheduler.add_job(
         send_daily_briefing,
@@ -412,7 +423,31 @@ def main():
         replace_existing=True,
     )
     scheduler.start()
+    app.bot_data["scheduler"] = scheduler
     log.info("📅 Scheduler iniciado — briefing diário às 07:00 (Lisboa)")
+
+async def post_shutdown(app: Application) -> None:
+    scheduler = app.bot_data.get("scheduler")
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+        log.info("📅 Scheduler encerrado.")
+
+def main():
+    log.info("🚀 A iniciar Briefing Diário Bot...")
+
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    # Handlers
+    app.add_handler(CommandHandler("start",    cmd_start))
+    app.add_handler(CommandHandler("briefing", cmd_briefing))
+    app.add_handler(CommandHandler("hoje",     cmd_briefing))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
 
     # Polling
     log.info("📡 Bot em polling...")

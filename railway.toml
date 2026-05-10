@@ -1,6 +1,10 @@
 [build]
 builder = "NIXPACKS"
 
-[deploy]
+[[services]]
+name = "briefing-diario"
+source = "."
+
+[services.deploy]
 startCommand = "python briefing.py"
 cronSchedule = "0 6 * * *"

@@ -45,8 +45,8 @@ TELEGRAM_CHANNEL   = os.environ["TELEGRAM_CHANNEL_ID"]
 # Limita /briefing e chat ao dono do bot. Deixa "" para aceitar toda a gente.
 ADMIN_TELEGRAM_ID  = os.environ.get("TELEGRAM_ADMIN_ID", "")
 
-MODEL_BRIEFING = "claude-sonnet-4-20250514"
-MODEL_CHAT     = "claude-sonnet-4-20250514"
+MODEL_BRIEFING = "claude-sonnet-4-6"
+MODEL_CHAT     = "claude-haiku-4-5-20251001"
 
 # Histórico de conversa por utilizador (últimas N trocas)
 MAX_HISTORY = 12
@@ -139,57 +139,23 @@ def generate_briefing(today: str) -> dict:
     """Chama API Anthropic com web search. Corre em thread para não bloquear."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    system = f"""You are an elite daily news curator for a senior Portuguese professional in Lisbon. Today is {today}.
+    system = f"""You are an elite news curator for a Portuguese professional in Lisbon. Today is {today}.
 
-Your job: search for today's most significant and intellectually interesting news, prioritising quality journalism over viral content. You are curating for someone who reads The Economist and the Financial Times.
+Search the web for today's most important news. Prioritise quality sources:
+- Portugal: Público, Observador, Expresso, Jornal de Negócios
+- Business/Economy: Financial Times, The Economist, Bloomberg, Reuters, WSJ
+- World: The Economist, Reuters, BBC, Financial Times, Politico
+- Health/Science: The Lancet, Nature, STAT News, BBC Health
+- Tech/AI: MIT Technology Review, Wired, Ars Technica, FT Tech
+- Sport: ESPN, BBC Sport, Sky Sports, A Bola, Record
 
-## Source hierarchy (search these first)
-- Portugal & Política: Público, Observador, Expresso, Jornal de Negócios, RTP Notícias
-- Economia & Business: Financial Times, The Economist, Bloomberg, Reuters, Wall Street Journal, Jornal de Negócios
-- Mundo & Geopolítica: The Economist, Reuters, BBC World, Financial Times, Politico, Foreign Affairs
-- Saúde & Ciência: The Lancet, Nature, STAT News, BBC Health, Science, NEJM
-- Tech & IA: MIT Technology Review, Wired, The Information, Financial Times Tech, Ars Technica
-- Desporto: ESPN, BBC Sport, Sky Sports, A Bola, Record, O Jogo
+Select stories with lasting consequences. Skip gossip and low-signal viral content.
+Each summary: 3 sentences — fact + context + "so what for someone in Lisbon". In Portuguese.
 
-## Selection criteria
-- Prefer stories with lasting consequences over one-day wonders
-- Flag anything that shifts a trend, sets a precedent, or reveals a deeper pattern
-- Skip celebrity gossip, pure entertainment, and low-signal viral stories
+Output ONLY raw JSON, starting with {{ and ending with }}:
+{{"date":"{today}","headline":"frase mais importante do dia em português","categories":[{{"id":"portugal","name":"Portugal & Política","emoji":"🇵🇹","items":[{{"title":"título","summary":"3 frases pt","source":"fonte","url":"https://...","importance":"high"}}]}},{{"id":"business","name":"Economia & Business","emoji":"💼","items":[]}},{{"id":"mundo","name":"Mundo & Geopolítica","emoji":"🌍","items":[]}},{{"id":"saude","name":"Saúde & Ciência","emoji":"🧬","items":[]}},{{"id":"tech","name":"Tech & IA","emoji":"🤖","items":[]}},{{"id":"desporto","name":"Desporto","emoji":"⚽","items":[]}}]}}
 
-## Summary quality — 3 sentences per item:
-1. The core fact (what happened)
-2. The cause or context (why it happened / background)
-3. The "so what" — consequence or significance for a reader in Lisbon
-Write in clear, direct Portuguese. No jargon.
-
-After all searches, output ONLY a raw JSON object. Start with {{ and end with }}.
-
-{{
-  "date": "{today}",
-  "headline": "A história mais importante e consequente do dia, em português",
-  "categories": [
-    {{
-      "id": "portugal",
-      "name": "Portugal & Política",
-      "emoji": "🇵🇹",
-      "items": [
-        {{
-          "title": "Título da notícia",
-          "summary": "3 frases: facto + contexto + consequência. Em português.",
-          "source": "Nome da publicação",
-          "url": "https://link-direto-para-o-artigo.com",
-          "importance": "high"
-        }}
-      ]
-    }}
-  ]
-}}
-
-ALL 6 categories (exact ids): portugal · business · mundo · saude · tech · desporto
-Names: "Portugal & Política" · "Economia & Business" · "Mundo & Geopolítica" · "Saúde & Ciência" · "Tech & IA" · "Desporto"
-3-4 items per category. importance: high | medium | low. Summaries in Portuguese.
-Output ONLY the JSON."""
-
+3-4 items per category. importance: high|medium|low. All summaries in Portuguese."""
     messages = [{
         "role": "user",
         "content": "Search for today's most significant news. For each of the 6 categories, use the quality sources listed. After all searches, return only the JSON briefing."

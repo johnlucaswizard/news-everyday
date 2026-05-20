@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 
 import anthropic
@@ -40,19 +41,12 @@ log = logging.getLogger(__name__)
 ANTHROPIC_API_KEY  = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL   = os.environ["TELEGRAM_CHANNEL_ID"]
-
-# ID numérico do teu utilizador Telegram (opcional mas recomendado)
-# Limita /briefing e chat ao dono do bot. Deixa "" para aceitar toda a gente.
 ADMIN_TELEGRAM_ID  = os.environ.get("TELEGRAM_ADMIN_ID", "")
 
-MODEL_BRIEFING = "claude-haiku-4-5-20251001"
-MODEL_CHAT     = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-4-5-20251001"
 
-# Histórico de conversa por utilizador (últimas N trocas)
 MAX_HISTORY = 12
 conversation_history: dict[int, list[dict]] = {}
-
-# Último briefing gerado (contexto para o chat)
 last_briefing: dict | None = None
 
 # ── DATE ─────────────────────────────────────────────────────
@@ -93,7 +87,7 @@ def block_to_dict(block) -> dict:
 
 def content_to_str(content) -> str:
     if not content:
-        return "Search completed."
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -106,20 +100,21 @@ def content_to_str(content) -> str:
                 if t == "text":
                     parts.append(c.get("text",""))
                 elif t == "web_search_result":
-                    parts.append(f"{c.get('title','')}: {c.get('url','')}")
-            elif hasattr(c, "type"):
-                if c.type == "text":
-                    parts.append(getattr(c,"text",""))
+                    title = c.get("title","")
+                    url   = c.get("url","")
+                    text  = c.get("text","")[:300]
+                    parts.append(f"{title} ({url}): {text}")
+            elif hasattr(c, "type") and c.type == "text":
+                parts.append(getattr(c, "text", ""))
         return "\n".join(filter(None, parts))
     return str(content)
 
 def is_admin(user_id: int) -> bool:
     if not ADMIN_TELEGRAM_ID:
-        return True  # sem restrição
+        return True
     return str(user_id) == ADMIN_TELEGRAM_ID.strip()
 
 def split_message(text: str, limit: int = 4000) -> list[str]:
-    """Divide texto longo em partes para o Telegram."""
     if len(text) <= limit:
         return [text]
     parts, current = [], ""
@@ -134,126 +129,138 @@ def split_message(text: str, limit: int = 4000) -> list[str]:
         parts.append(current.strip())
     return parts
 
-# ── BRIEFING GENERATION ───────────────────────────────────────
+def api_call_with_retry(client, **kwargs) -> object:
+    """Chama a API com retry automático no rate limit."""
+    for attempt in range(4):
+        try:
+            return client.messages.create(**kwargs)
+        except anthropic.RateLimitError:
+            if attempt < 3:
+                wait = 20 * (attempt + 1)
+                log.warning(f"Rate limit — aguardando {wait}s (tentativa {attempt+1}/3)...")
+                time.sleep(wait)
+            else:
+                raise
+
+# ── BRIEFING GENERATION (dois fases) ─────────────────────────
 def generate_briefing(today: str) -> dict:
-    """Chama API Anthropic com web search. Corre em thread para não bloquear."""
+    """
+    Fase 1: pesquisa com web search, acumula snippets.
+    Fase 2: chamada limpa sem ferramentas para formatar JSON.
+    """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    system = f"""You are an elite news curator for a Portuguese professional in Lisbon. Today is {today}.
+    # ── Fase 1: Pesquisa ──────────────────────────────────────
+    search_system = f"""You are a news researcher. Today is {today}.
+Search the web for today's most important news across 6 areas:
+1. Portugal & politics (Público, Observador, Expresso)
+2. Business & economy (FT, Economist, Bloomberg, Reuters, WSJ)
+3. World & geopolitics (Economist, Reuters, BBC, Politico)
+4. Health & science (Lancet, Nature, STAT News, BBC Health)
+5. Tech & AI (MIT Tech Review, Wired, Ars Technica)
+6. Sport (ESPN, BBC Sport, A Bola, Record)
+Do at least one search per area. Find 3-4 stories per area."""
 
-Search the web for today's most important news. Prioritise quality sources:
-- Portugal: Público, Observador, Expresso, Jornal de Negócios
-- Business/Economy: Financial Times, The Economist, Bloomberg, Reuters, WSJ
-- World: The Economist, Reuters, BBC, Financial Times, Politico
-- Health/Science: The Lancet, Nature, STAT News, BBC Health
-- Tech/AI: MIT Technology Review, Wired, Ars Technica, FT Tech
-- Sport: ESPN, BBC Sport, Sky Sports, A Bola, Record
+    messages = [{"role":"user","content":"Search for today's top news in all 6 areas."}]
+    collected_snippets: list[str] = []
 
-Select stories with lasting consequences. Skip gossip and low-signal viral content.
-Each summary: 3 sentences — fact + context + "so what for someone in Lisbon". In Portuguese.
-
-Output ONLY raw JSON, starting with {{ and ending with }}:
-{{"date":"{today}","headline":"frase mais importante do dia em português","categories":[{{"id":"portugal","name":"Portugal & Política","emoji":"🇵🇹","items":[{{"title":"título","summary":"3 frases pt","source":"fonte","url":"https://...","importance":"high"}}]}},{{"id":"business","name":"Economia & Business","emoji":"💼","items":[]}},{{"id":"mundo","name":"Mundo & Geopolítica","emoji":"🌍","items":[]}},{{"id":"saude","name":"Saúde & Ciência","emoji":"🧬","items":[]}},{{"id":"tech","name":"Tech & IA","emoji":"🤖","items":[]}},{{"id":"desporto","name":"Desporto","emoji":"⚽","items":[]}}]}}
-
-3-4 items per category. importance: high|medium|low. All summaries in Portuguese."""
-    messages = [{
-        "role": "user",
-        "content": "Search for today's most significant news. For each of the 6 categories, use the quality sources listed. After all searches, return only the JSON briefing."
-    }]
-
-    for iteration in range(8):
-        log.info(f"  [loop {iteration}] calling API...")
-        import time as _time
-        for _attempt in range(4):
-            try:
-                response = client.messages.create(
-                    model=MODEL_BRIEFING,
-                    max_tokens=2000,
-                    system=system,
-                    tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                    messages=messages,
-                )
-                break
-            except anthropic.RateLimitError:
-                if _attempt < 3:
-                    log.warning(f"Rate limit — aguardando 20s (tentativa {_attempt+1}/3)...")
-                    _time.sleep(20)
-                else:
-                    raise
-        log.info(f"  [loop {iteration}] stop_reason={response.stop_reason}")
+    for iteration in range(10):
+        log.info(f"  [search loop {iteration}]")
+        response = api_call_with_retry(
+            client,
+            model=MODEL,
+            max_tokens=1000,
+            system=search_system,
+            tools=[{"type":"web_search_20250305","name":"web_search"}],
+            messages=messages,
+        )
+        log.info(f"  stop_reason={response.stop_reason}, blocks={[b.type for b in response.content]}")
 
         if response.stop_reason == "end_turn":
-            for block in response.content:
-                if hasattr(block, "text") and block.type == "text":
-                    parsed = extract_json(block.text)
-                    if parsed:
-                        return parsed
-                    # Model returned narrative instead of JSON — ask explicitly
-                    log.info("  end_turn but no JSON — asking again...")
-                    messages.append({"role":"assistant","content":[block_to_dict(b) for b in response.content]})
-                    messages.append({"role":"user","content":[{"type":"text","text":"Return ONLY the JSON object now. No explanations. Start with { and end with }."}]})
-                    break  # continue outer loop
-            else:
-                raise RuntimeError("end_turn sem bloco de texto.")
-            continue
+            break
 
         if response.stop_reason == "tool_use":
             messages.append({"role":"assistant","content":[block_to_dict(b) for b in response.content]})
             tool_uses  = [b for b in response.content if b.type in ("tool_use","server_tool_use")]
             ws_results = {b.tool_use_id: b for b in response.content if b.type == "web_search_tool_result"}
+
+            # Extrai snippets legíveis
+            for r in ws_results.values():
+                snippet = content_to_str(r.content)
+                if snippet:
+                    collected_snippets.append(snippet[:1500])
+
             tool_results = [{
                 "type":        "tool_result",
                 "tool_use_id": tu.id,
-                "content":     content_to_str(ws_results[tu.id].content if tu.id in ws_results else None),
+                "content":     content_to_str(ws_results[tu.id].content if tu.id in ws_results else None) or "Done.",
             } for tu in tool_uses]
-            messages.append({"role":"user","content": tool_results or [{"type":"text","text":"Continue with the JSON."}]})
-            continue
 
-        for block in response.content:
-            if hasattr(block, "text") and block.type == "text":
-                parsed = extract_json(block.text)
-                if parsed:
-                    return parsed
-        raise RuntimeError(f"stop_reason inesperado: {response.stop_reason}")
+            messages.append({"role":"user","content": tool_results or [{"type":"text","text":"Continue."}]})
 
-    raise RuntimeError("Limite de iterações atingido.")
+    if not collected_snippets:
+        raise RuntimeError("Nenhum resultado de pesquisa recolhido.")
+
+    search_context = "\n\n---\n\n".join(collected_snippets)
+    log.info(f"  Recolhidos {len(collected_snippets)} snippets ({len(search_context)} chars)")
+
+    # ── Fase 2: Formatar JSON ─────────────────────────────────
+    format_prompt = f"""Here are today's news search results:
+
+{search_context[:10000]}
+
+Based on these results, produce a news briefing. Output ONLY valid JSON — nothing before {{, nothing after }}.
+
+{{"date":"{today}","headline":"A história mais importante do dia, em português","categories":[{{"id":"portugal","name":"Portugal & Política","emoji":"🇵🇹","items":[{{"title":"Título","summary":"3 frases pt: facto+contexto+consequência para alguém em Lisboa.","source":"Público","url":"https://exemplo.com","importance":"high"}}]}},{{"id":"business","name":"Economia & Business","emoji":"💼","items":[]}},{{"id":"mundo","name":"Mundo & Geopolítica","emoji":"🌍","items":[]}},{{"id":"saude","name":"Saúde & Ciência","emoji":"🧬","items":[]}},{{"id":"tech","name":"Tech & IA","emoji":"🤖","items":[]}},{{"id":"desporto","name":"Desporto","emoji":"⚽","items":[]}}]}}
+
+Rules: 3-4 items per category. importance: high|medium|low. All summaries in Portuguese. Include real URLs."""
+
+    log.info("  [format phase] calling API...")
+    fmt_response = api_call_with_retry(
+        client,
+        model=MODEL,
+        max_tokens=3500,
+        messages=[{"role":"user","content":format_prompt}],
+    )
+
+    for block in fmt_response.content:
+        if hasattr(block, "text") and block.type == "text":
+            parsed = extract_json(block.text)
+            if parsed:
+                log.info("  ✅ JSON parsed successfully")
+                return parsed
+            raise RuntimeError(f"JSON inválido na fase de formatação:\n{block.text[:300]}")
+
+    raise RuntimeError("Fase de formatação não devolveu texto.")
 
 # ── TELEGRAM FORMATTING ───────────────────────────────────────
 IMP_DOT = {"high":"🔴","medium":"🟡","low":"⚪"}
 DIVIDER = "─" * 28
 
 def format_messages(briefing: dict) -> list[str]:
-    """Máximo 2 mensagens Telegram — todas as categorias num bloco limpo."""
     header = (
         f"📰 <b>BRIEFING DIÁRIO</b>\n"
         f"<i>{briefing['date']}</i>\n"
         f"{DIVIDER}\n"
         f"<blockquote>{briefing['headline']}</blockquote>\n"
     )
-
     cat_blocks = []
     for cat in briefing["categories"]:
         lines = [f"\n{cat['emoji']} <b>{cat['name'].upper()}</b>"]
         for item in cat["items"]:
             dot = IMP_DOT.get(item.get("importance","low"), "⚪")
-            url  = item.get("url","")
-            src  = f'<a href="{url}">{item["source"]}</a>' if url else item["source"]
-            lines.append(
-                f'{dot} <b>{item["title"]}</b>\n'
-                f'<i>{item["summary"]}</i>\n'
-                f'↗ {src}'
-            )
+            url = item.get("url","")
+            src = f'<a href="{url}">{item["source"]}</a>' if url else item["source"]
+            lines.append(f'{dot} <b>{item["title"]}</b>\n<i>{item["summary"]}</i>\n↗ {src}')
         cat_blocks.append("\n".join(lines))
 
     footer = f"\n{DIVIDER}\n⏰ <i>Gerado automaticamente · {briefing['date']}</i>"
-
-    LIMIT = 4000
-    messages = []
-    current = header
+    LIMIT  = 4000
+    msgs, current = [], header
 
     for block in cat_blocks:
         if len(current + block) > LIMIT:
-            messages.append(current.strip())
+            msgs.append(current.strip())
             current = block
         else:
             current += block
@@ -261,14 +268,13 @@ def format_messages(briefing: dict) -> list[str]:
     if len(current + footer) <= LIMIT:
         current += footer
     else:
-        messages.append(current.strip())
+        msgs.append(current.strip())
         current = footer.strip()
 
-    messages.append(current.strip())
-    return messages
+    msgs.append(current.strip())
+    return msgs
 
 def briefing_to_context(briefing: dict) -> str:
-    """Comprime o briefing num bloco de texto para contexto do chat."""
     lines = [f"Briefing do dia {briefing['date']}:"]
     for cat in briefing["categories"]:
         lines.append(f"\n{cat['name']}:")
@@ -278,13 +284,12 @@ def briefing_to_context(briefing: dict) -> str:
 
 # ── BOT HANDLERS ──────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conversation_history.pop(user_id, None)
+    conversation_history.pop(update.effective_user.id, None)
     await update.message.reply_html(
         "👋 Olá! Sou o teu assistente de notícias diárias.\n\n"
         "📰 /briefing — Gerar briefing agora\n"
         "🔄 /hoje — Alias de /briefing\n"
-        "💬 <b>Envia qualquer mensagem</b> para discutir notícias\n\n"
+        "💬 <b>Qualquer mensagem</b> → discutir notícias\n\n"
         "O briefing é enviado automaticamente para o canal todos os dias às 7h."
     )
 
@@ -293,15 +298,14 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if not is_admin(user_id):
-        await update.message.reply_text("⛔ Não tens permissão para usar este comando.")
+        await update.message.reply_text("⛔ Não tens permissão.")
         return
 
-    msg = await update.message.reply_text("🔍 A pesquisar notícias… (~30 segundos)")
+    msg = await update.message.reply_text("🔍 A pesquisar notícias… (~30-60s)")
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
 
     try:
-        today = today_label()
-        briefing = await asyncio.to_thread(generate_briefing, today)
+        briefing = await asyncio.to_thread(generate_briefing, today_label())
         last_briefing = briefing
         await msg.delete()
         for text in format_messages(briefing):
@@ -309,14 +313,13 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.info(f"Briefing on-demand enviado para {user_id}")
     except Exception as e:
         log.error(f"Erro no briefing on-demand: {e}")
-        await msg.edit_text(f"❌ Erro ao gerar briefing:\n{str(e)[:300]}")
+        await msg.edit_text(f"❌ Erro: {str(e)[:300]}")
 
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Chat livre com contexto do briefing do dia."""
+    """Chat livre — não bloqueia o event loop."""
     user_id = update.effective_user.id
-
     if not is_admin(user_id):
-        return  # ignora silenciosamente se não for admin
+        return
 
     user_text = update.message.text
     if not user_text:
@@ -324,41 +327,33 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
 
-    # Inicializa histórico
     if user_id not in conversation_history:
         conversation_history[user_id] = []
-
-    # Adiciona mensagem do utilizador
     conversation_history[user_id].append({"role":"user","content":user_text})
-
-    # Mantém só as últimas N mensagens
     if len(conversation_history[user_id]) > MAX_HISTORY:
         conversation_history[user_id] = conversation_history[user_id][-MAX_HISTORY:]
 
-    # System prompt com contexto do briefing
     briefing_ctx = briefing_to_context(last_briefing) if last_briefing else "Ainda não foi gerado um briefing hoje."
-    system = f"""És um assistente de notícias inteligente para um profissional português em Lisboa. Respondes sempre em português, de forma direta e analítica.
-
-Quando o utilizador faz perguntas sobre notícias, usa o briefing de hoje como ponto de partida.
-Se o utilizador pede mais detalhe sobre uma notícia, aprofunda com o teu conhecimento mas avisa se estás a ir além do que foi noticiado.
-Sê conciso mas substancial. Sem jargão, sem rodeios.
+    system = f"""És um assistente de notícias para um profissional português em Lisboa. Respondes sempre em português, de forma direta e analítica.
+Usa o briefing de hoje como contexto quando relevante. Sê conciso mas substancial.
 
 {briefing_ctx}"""
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=MODEL_CHAT,
-            max_tokens=1200,
-            system=system,
-            messages=conversation_history[user_id],
-        )
-        reply = response.content[0].text
+        # Corre o SDK síncrono numa thread — não bloqueia o event loop
+        def _call():
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            return client.messages.create(
+                model=MODEL,
+                max_tokens=1200,
+                system=system,
+                messages=conversation_history[user_id],
+            )
 
-        # Adiciona resposta ao histórico
+        response = await asyncio.to_thread(_call)
+        reply = response.content[0].text
         conversation_history[user_id].append({"role":"assistant","content":reply})
 
-        # Envia (divide se necessário)
         for part in split_message(reply):
             await update.message.reply_text(part)
 
@@ -371,8 +366,7 @@ async def send_daily_briefing(bot: Bot):
     global last_briefing
     log.info("⏰ A gerar briefing diário...")
     try:
-        today = today_label()
-        briefing = await asyncio.to_thread(generate_briefing, today)
+        briefing = await asyncio.to_thread(generate_briefing, today_label())
         last_briefing = briefing
         for text in format_messages(briefing):
             await bot.send_message(
@@ -395,7 +389,6 @@ async def send_daily_briefing(bot: Bot):
 
 # ── MAIN ──────────────────────────────────────────────────────
 async def post_init(app: Application) -> None:
-    """Iniciado dentro do event loop — sítio certo para o scheduler."""
     scheduler = AsyncIOScheduler(timezone="Europe/Lisbon")
     scheduler.add_job(
         send_daily_briefing,
@@ -412,11 +405,9 @@ async def post_shutdown(app: Application) -> None:
     scheduler = app.bot_data.get("scheduler")
     if scheduler and scheduler.running:
         scheduler.shutdown(wait=False)
-        log.info("📅 Scheduler encerrado.")
 
 def main():
     log.info("🚀 A iniciar Briefing Diário Bot...")
-
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
@@ -424,14 +415,10 @@ def main():
         .post_shutdown(post_shutdown)
         .build()
     )
-
-    # Handlers
     app.add_handler(CommandHandler("start",    cmd_start))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(CommandHandler("hoje",     cmd_briefing))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
-
-    # Polling
     log.info("📡 Bot em polling...")
     app.run_polling(allowed_updates=["message"])
 

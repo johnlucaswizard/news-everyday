@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Briefing Diário</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<style>
+/* ── RESET & VARIABLES ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:      #07070f;
+  --card:    #0d0d1c;
+  --card2:   #12122a;
+  --gold:    #e9a010;
+  --gold-dim: rgba(233,160,16,.15);
+  --muted:   #8a8098;
+  --border:  #1a1a2e;
+  --text:    #ddd8ce;
+  --serif:   'Playfair Display', Georgia, serif;
+  --sans:    'DM Sans', system-ui, sans-serif;
+  --red:     #e05044;
+  --blue:    #4a7abf;
+}
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: var(--sans); cursor: pointer; }
+input  { font-family: var(--sans); }
+a { color: var(--gold); text-decoration: none; }
+a:hover { text-decoration: underline; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 4px; }
+
+/* ── ANIMATIONS ── */
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes fadeUp  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulse   { 0%,100% { opacity:.6; } 50% { opacity:1; } }
+
+/* ── SETUP SCREEN ── */
+#setup-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--bg);
+  animation: fadeIn .4s ease;
+}
+.setup-wrap {
+  width: 100%;
+  max-width: 420px;
+}
+.setup-logo {
+  font-family: var(--serif);
+  font-size: 1.6em;
+  font-weight: 900;
+  color: var(--gold);
+  letter-spacing: -.02em;
+  margin-bottom: 6px;
+}
+.setup-tagline {
+  font-size: .78em;
+  color: var(--muted);
+  margin-bottom: 32px;
+  line-height: 1.6;
+}
+.setup-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 28px 24px;
+}
+.setup-label {
+  display: block;
+  font-size: .74em;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.setup-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 14px;
+  color: var(--text);
+  font-size: .88em;
+  outline: none;
+  transition: border-color .2s;
+  margin-bottom: 6px;
+  -webkit-appearance: none;
+}
+.setup-input:focus { border-color: var(--gold); }
+.setup-input::placeholder { color: #3a3a5a; }
+.setup-hint {
+  font-size: .72em;
+  color: #4a4a6a;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+.setup-btn {
+  width: 100%;
+  background: var(--gold);
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: 700;
+  font-size: .9em;
+  transition: opacity .15s;
+}
+.setup-btn:hover { opacity: .88; }
+.setup-error {
+  display: none;
+  color: var(--red);
+  font-size: .76em;
+  margin-top: 10px;
+  text-align: center;
+}
+.setup-footer {
+  margin-top: 20px;
+  font-size: .72em;
+  color: #3a3a5a;
+  text-align: center;
+  line-height: 1.7;
+}
+
+/* ── APP ── */
+#app { display: none; }
+
+/* ── HEADER ── */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(7,7,15,.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.logo-block {}
+.logo-text {
+  font-family: var(--serif);
+  font-size: 1.18em;
+  font-weight: 900;
+  color: var(--gold);
+  letter-spacing: -.02em;
+  line-height: 1;
+}
+.logo-date {
+  font-size: .67em;
+  color: var(--muted);
+  margin-top: 3px;
+  text-transform: capitalize;
+}
+.header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── BUTTONS ── */
+.btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 20px;
+  padding: 6px 13px;
+  font-size: .74em;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.btn.active { background: var(--gold-dim); border-color: rgba(233,160,16,.4); color: var(--gold); }
+.btn.danger { border-color: rgba(224,80,68,.35); color: var(--red); }
+.btn.danger:hover { background: rgba(224,80,68,.08); }
+.btn-primary {
+  background: var(--gold);
+  color: #000;
+  border: none;
+  border-radius: 20px;
+  padding: 7px 18px;
+  font-weight: 700;
+  font-size: .78em;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.btn-primary:hover { opacity: .88; }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+.btn-big {
+  background: var(--gold);
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  padding: 14px 36px;
+  font-weight: 700;
+  font-size: 1em;
+  transition: opacity .15s;
+}
+.btn-big:hover { opacity: .88; }
+
+/* ── MAIN ── */
+main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 22px 64px;
+}
+
+/* ── STATE VIEWS ── */
+.view { display: none; }
+
+#view-empty {
+  text-align: center;
+  padding: 80px 20px 60px;
+  animation: fadeUp .5s ease;
+}
+.empty-emoji { font-size: 3.5em; margin-bottom: 18px; line-height: 1; }
+.empty-title {
+  font-family: var(--serif);
+  font-size: 1.7em;
+  font-weight: 900;
+  color: #e8e0d0;
+  margin-bottom: 10px;
+}
+.empty-desc {
+  color: var(--muted);
+  font-size: .86em;
+  line-height: 1.75;
+  margin-bottom: 10px;
+}
+.empty-meta { color: #4a4a6a; font-size: .74em; margin-bottom: 32px; }
+
+#view-loading {
+  text-align: center;
+  padding: 90px 20px;
+}
+.spinner {
+  width: 38px; height: 38px;
+  border: 3px solid var(--border);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  margin: 0 auto 24px;
+  animation: spin .9s linear infinite;
+}
+.load-step { color: var(--muted); font-size: .84em; animation: pulse 1.6s ease infinite; }
+
+#view-error {
+  padding: 50px 20px 40px;
+  text-align: center;
+  animation: fadeUp .3s ease;
+}
+.error-emoji { font-size: 2em; margin-bottom: 12px; }
+.error-msg { color: #e06060; font-size: .85em; white-space: pre-wrap; max-width: 500px; margin: 0 auto 20px; line-height: 1.6; }
+.debug-panel {
+  display: none;
+  margin: 24px auto 0;
+  max-width: 600px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: left;
+}
+.debug-title { font-size: .72em; color: var(--gold); font-weight: 600; margin-bottom: 8px; }
+.debug-raw { font-size: .7em; color: var(--muted); white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow-y: auto; margin: 0; font-family: 'Courier New', monospace; line-height: 1.5; }
+
+#view-briefing { animation: fadeUp .4s ease; }
+
+/* ── HEADLINE ── */
+.headline-bar {
+  padding: 22px 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.headline-quote {
+  font-family: var(--serif);
+  font-size: 1.1em;
+  font-style: italic;
+  color: #e8e0d0;
+  line-height: 1.62;
+}
+
+/* ── CATEGORY TABS ── */
+.cat-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 14px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.cat-tabs::-webkit-scrollbar { display: none; }
+.cat-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 20px;
+  padding: 5px 13px;
+  font-size: .73em;
+  white-space: nowrap;
+  transition: all .18s;
+}
+.cat-tab:hover { color: var(--text); background: rgba(255,255,255,.03); }
+.cat-tab.active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #000;
+  font-weight: 600;
+}
+
+/* ── NEWS SECTION ── */
+.news-section { margin-top: 8px; }
+.cat-block { margin-bottom: 24px; }
+.cat-heading {
+  font-family: var(--serif);
+  font-size: .98em;
+  font-weight: 700;
+  color: var(--gold);
+  margin: 22px 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.news-stack { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── NEWS CARD ── */
+.news-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 14px 16px;
+  transition: background .2s;
+  border-left-width: 3px;
+  border-left-style: solid;
+}
+.news-card:hover { background: var(--card2); }
+.news-card.imp-high   { border-left-color: var(--gold); }
+.news-card.imp-medium { border-left-color: var(--blue); }
+.news-card.imp-low    { border-left-color: #2e2e4a; }
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.card-title { font-weight: 500; font-size: .88em; color: #e8e0d0; line-height: 1.4; }
+.badge {
+  flex-shrink: 0;
+  font-size: .59em;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+.badge-high { background: var(--gold-dim); color: var(--gold); }
+.card-summary { font-size: .8em; color: var(--muted); line-height: 1.72; }
+.card-source { margin-top: 8px; font-size: .68em; color: #4a4a6a; }
+
+/* ── BRIEFING FOOTER ── */
+.briefing-footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: .7em;
+  color: #3a3a5a;
+  text-align: center;
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 600px) {
+  header { padding: 12px 16px; }
+  main   { padding: 0 14px 48px; }
+  .empty-title { font-size: 1.4em; }
+  .headline-quote { font-size: .98em; }
+}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════
+     SETUP SCREEN
+════════════════════════════════════════ -->
+<div id="setup-screen">
+  <div class="setup-wrap">
+    <div class="setup-logo">📰 Briefing Diário</div>
+    <p class="setup-tagline">O teu resumo diário de notícias gerado por IA.<br>Portugal · Business · Mundo · Saúde · Tech · Desporto</p>
+    <div class="setup-card">
+      <label class="setup-label" for="key-input">Anthropic API Key</label>
+      <input class="setup-input" id="key-input" type="password" placeholder="sk-ant-api03-…" autocomplete="off" spellcheck="false">
+      <div class="setup-hint">
+        A key é guardada localmente no teu browser e nunca sai do dispositivo.<br>
+        Obtém a tua em <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+      </div>
+      <button class="setup-btn" id="setup-btn" onclick="saveKey()">Continuar →</button>
+      <div class="setup-error" id="setup-error"></div>
+    </div>
+    <div class="setup-footer">
+      A API key é necessária para pesquisar notícias em tempo real.<br>
+      Custo estimado: &lt; €0.05 por briefing.
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     MAIN APP
+════════════════════════════════════════ -->
+<div id="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo-block">
+      <div class="logo-text">📰 BRIEFING DIÁRIO</div>
+      <div class="logo-date" id="hdr-date"></div>
+    </div>
+    <div class="header-actions">
+      <button class="btn" id="btn-speak"   onclick="startSpeak()"  style="display:none">▶ Ouvir</button>
+      <button class="btn active" id="btn-pause"  onclick="pauseSpeak()"  style="display:none">⏸ Pausar</button>
+      <button class="btn active" id="btn-resume" onclick="resumeSpeak()" style="display:none">▶ Retomar</button>
+      <button class="btn danger" id="btn-stop"   onclick="stopSpeak()"   style="display:none">⏹ Parar</button>
+      <button class="btn" id="btn-dl"      onclick="downloadHTML()"  style="display:none">↓ Guardar</button>
+      <button class="btn" onclick="changeKey()" title="Mudar API key">🔑</button>
+      <button class="btn-primary" id="btn-gen" onclick="generate()">⚡ Gerar</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- EMPTY -->
+    <div class="view" id="view-empty">
+      <div class="empty-emoji">📰</div>
+      <div class="empty-title">O teu briefing de hoje</div>
+      <p class="empty-desc">Notícias reais pesquisadas agora pela IA.<br>Um resumo em bullet points do que importa saber.</p>
+      <p class="empty-meta">~30 segundos · 6 categorias · com áudio</p>
+      <button class="btn-big" onclick="generate()">⚡ Gerar Briefing de Hoje</button>
+    </div>
+
+    <!-- LOADING -->
+    <div class="view" id="view-loading">
+      <div class="spinner"></div>
+      <div class="load-step" id="load-msg">A iniciar…</div>
+    </div>
+
+    <!-- ERROR -->
+    <div class="view" id="view-error">
+      <div class="error-emoji">⚠️</div>
+      <div class="error-msg" id="err-msg"></div>
+      <button class="btn-big" onclick="generate()">Tentar novamente</button>
+      <div class="debug-panel" id="debug-panel">
+        <div class="debug-title">🛠 Resposta raw da API (debug):</div>
+        <pre class="debug-raw" id="debug-raw"></pre>
+      </div>
+    </div>
+
+    <!-- BRIEFING -->
+    <div class="view" id="view-briefing">
+      <div class="headline-bar">
+        <div class="headline-quote" id="b-headline"></div>
+      </div>
+      <div class="cat-tabs" id="cat-tabs"></div>
+      <div class="news-section" id="news-section"></div>
+      <div class="briefing-footer" id="b-footer"></div>
+    </div>
+  </main>
+
+</div><!-- /app -->
+
+<script>
+"use strict";
+
+/* ── CONSTANTS ─────────────────────────────────────────────── */
+const CATS = [
+  { id:"all",      label:"Todas",     emoji:"📰" },
+  { id:"portugal", label:"Portugal",  emoji:"🇵🇹" },
+  { id:"business", label:"Business",  emoji:"💼" },
+  { id:"mundo",    label:"Mundo",     emoji:"🌍" },
+  { id:"saude",    label:"Saúde",     emoji:"🧬" },
+  { id:"tech",     label:"Tech & IA", emoji:"🤖" },
+  { id:"desporto", label:"Desporto",  emoji:"⚽" },
+];
+
+const IMP_CLASS = { high:"imp-high", medium:"imp-medium", low:"imp-low" };
+
+/* ── STATE ─────────────────────────────────────────────────── */
+let briefing   = null;
+let activeCat  = "all";
+let rawDebug   = null;
+let speaking   = false;
+let paused     = false;
+
+/* ── HELPERS ───────────────────────────────────────────────── */
+function $(id) { return document.getElementById(id); }
+
+function today() {
+  return new Date().toLocaleDateString("pt-PT", {
+    weekday:"long", year:"numeric", month:"long", day:"numeric"
+  });
+}
+function todayLabel() {
+  const d = today();
+  return d.charAt(0).toUpperCase() + d.slice(1);
+}
+
+function showView(id) {
+  ["view-empty","view-loading","view-error","view-briefing"].forEach(v => {
+    $(v).style.display = v === id ? "block" : "none";
+  });
+}
+
+function setLoadMsg(msg) {
+  $("load-msg").textContent = msg;
+}
+
+function extractJSON(raw) {
+  if (!raw) return null;
+  // Strip possible markdown fences
+  let s = raw.trim()
+    .replace(/^```(?:json)?\s*/i,"")
+    .replace(/\s*```\s*$/i,"")
+    .trim();
+  try { return JSON.parse(s); } catch (_) {}
+  // Find outermost { }
+  const a = s.indexOf("{");
+  const b = s.lastIndexOf("}");
+  if (a !== -1 && b > a) {
+    try { return JSON.parse(s.slice(a, b+1)); } catch(_) {}
+  }
+  return null;
+}
+
+function contentToStr(content) {
+  if (!content) return "Search completed.";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map(c => {
+      if (typeof c === "string") return c;
+      if (c.type === "text") return c.text || "";
+      if (c.type === "web_search_result") return [c.title, c.url].filter(Boolean).join(": ");
+      return "";
+    }).filter(Boolean).join("\n");
+  }
+  return JSON.stringify(content);
+}
+
+/* ── SETUP / KEY MANAGEMENT ────────────────────────────────── */
+function saveKey() {
+  const val = $("key-input").value.trim();
+  const errEl = $("setup-error");
+  errEl.style.display = "none";
+
+  if (!val) { errEl.textContent = "Introduz a API key."; errEl.style.display = "block"; return; }
+  if (!val.startsWith("sk-ant-")) {
+    errEl.textContent = "A key deve começar com 'sk-ant-'.";
+    errEl.style.display = "block";
+    return;
+  }
+  localStorage.setItem("bd_key", val);
+  launchApp();
+}
+
+function changeKey() {
+  localStorage.removeItem("bd_key");
+  $("key-input").value = "";
+  $("setup-error").style.display = "none";
+  $("setup-screen").style.display = "flex";
+  $("app").style.display = "none";
+}
+
+function launchApp() {
+  $("setup-screen").style.display = "none";
+  $("app").style.display = "block";
+  showView("view-empty");
+}
+
+/* ── API CALL WITH RETRY ─────────────────────────────────── */
+async function apiCall(apiKey, body, onWait) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 429 && attempt < 3) {
+      onWait && onWait(attempt + 1);
+      await new Promise(r => setTimeout(r, 20000));
+      continue;
+    }
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e?.error?.message || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  }
+}
+
+/* ── RSS FEEDS ───────────────────────────────────────────── */
+const RSS_FEEDS = [
+  { cat:"portugal", name:"Portugal & Política", emoji:"🇵🇹",
+    urls:["https://www.publico.pt/rss","https://observador.pt/feed/","https://expresso.pt/rss"] },
+  { cat:"business", name:"Economia & Business", emoji:"💼",
+    urls:["https://feeds.bbci.co.uk/news/business/rss.xml","https://www.jornaldenegocios.pt/rss","https://feeds.reuters.com/reuters/businessNews"] },
+  { cat:"mundo",    name:"Mundo & Geopolítica", emoji:"🌍",
+    urls:["https://feeds.bbci.co.uk/news/world/rss.xml","https://www.politico.eu/feed/","https://feeds.reuters.com/reuters/worldNews"] },
+  { cat:"saude",    name:"Saúde & Ciência",     emoji:"🧬",
+    urls:["https://feeds.bbci.co.uk/news/health/rss.xml","https://feeds.bbci.co.uk/news/science_and_environment/rss.xml","https://feeds.feedburner.com/stat-news"] },
+  { cat:"tech",     name:"Tech & IA",           emoji:"🤖",
+    urls:["https://feeds.arstechnica.com/arstechnica/index","https://www.wired.com/feed/rss","https://feeds.feedburner.com/TechCrunch"] },
+  { cat:"desporto", name:"Desporto",            emoji:"⚽",
+    urls:["https://feeds.bbci.co.uk/sport/rss.xml","https://www.abola.pt/rss/index.aspx","https://www.record.pt/rss"] },
+];
+
+const RSS2JSON = "https://api.rss2json.com/v1/api.json?count=5&rss_url=";
+
+function stripHtml(html) {
+  return (html||"").replace(/<[^>]*>/g,"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&#39;/g,"'").replace(/&quot;/g,'"').trim();
+}
+
+async function fetchFeed(url) {
+  try {
+    const res = await fetch(RSS2JSON + encodeURIComponent(url));
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (data.status !== "ok" || !data.items) return [];
+    return data.items.map(item => ({
+      title:   stripHtml(item.title),
+      summary: stripHtml(item.description || item.content || "").slice(0, 200),
+      link:    item.link || "",
+      source:  stripHtml(data.feed?.title || url),
+    }));
+  } catch (_) { return []; }
+}
+
+async function fetchAllRSS(onStep) {
+  let context = `Today is ${todayLabel()}. Latest headlines from RSS feeds:
+
+`;
+  for (let i = 0; i < RSS_FEEDS.length; i++) {
+    const cat = RSS_FEEDS[i];
+    onStep(`📡 ${cat.name} (${i+1}/6)…`);
+    const items = [];
+    for (const url of cat.urls) {
+      const fetched = await fetchFeed(url);
+      items.push(...fetched);
+      if (items.length >= 6) break;
+    }
+    context += `=== ${cat.name} ===
+`;
+    if (items.length) {
+      items.slice(0,6).forEach(item => {
+        context += `• ${item.title}
+`;
+        if (item.summary) context += `  ${item.summary.slice(0,150)}
+`;
+        context += `  URL: ${item.link}  Source: ${item.source}
+`;
+      });
+    } else {
+      context += `  (sem resultados)
+`;
+    }
+    context += "
+";
+  }
+  return context;
+}
+
+/* ── FORMAT JSON ─────────────────────────────────────────── */
+async function formatJSON(apiKey, rssContext, label) {
+  const prompt = `${rssContext}
+Based on these RSS headlines, create a daily news briefing. Select the 3-4 most important and interesting stories per category.
+
+Output ONLY valid JSON, nothing before { or after }.
+
+{"date":"${label}","headline":"A história mais importante do dia, em português","categories":[{"id":"portugal","name":"Portugal & Política","emoji":"🇵🇹","items":[{"title":"Título","summary":"3 frases em português: facto + contexto + consequência para alguém em Lisboa.","source":"Público","url":"https://link.com","importance":"high"}]},{"id":"business","name":"Economia & Business","emoji":"💼","items":[]},{"id":"mundo","name":"Mundo & Geopolítica","emoji":"🌍","items":[]},{"id":"saude","name":"Saúde & Ciência","emoji":"🧬","items":[]},{"id":"tech","name":"Tech & IA","emoji":"🤖","items":[]},{"id":"desporto","name":"Desporto","emoji":"⚽","items":[]}]}
+
+Rules: 3-4 items per category. importance: high|medium|low. All summaries in Portuguese. Use real URLs from above.`;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 3500,
+        messages: [{ role:"user", content: prompt }],
+      }),
+    });
+    if (res.status === 429) {
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 15000)); continue; }
+      const e = await res.json().catch(()=>({}));
+      throw new Error(e?.error?.message || "Rate limit");
+    }
+    if (!res.ok) {
+      const e = await res.json().catch(()=>({}));
+      throw new Error(e?.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data?.content?.find(b => b.type==="text")?.text ?? null;
+  }
+}
+
+/* ── GENERATE ────────────────────────────────────────────── */
+async function generate() {
+  const apiKey = localStorage.getItem("bd_key");
+  if (!apiKey) { changeKey(); return; }
+
+  if (speaking) stopSpeak();
+  briefing = null; rawDebug = null;
+
+  showView("view-loading");
+  setLoadMsg("📡 A recolher RSS feeds…");
+
+  const btn = $("btn-gen");
+  btn.disabled = true; btn.textContent = "…";
+  toggleHeaderBtns(false);
+
+  const label = todayLabel();
+
+  try {
+    // Fase 1: RSS
+    const rssContext = await fetchAllRSS(msg => setLoadMsg(msg));
+
+    // Fase 2: Claude formata JSON
+    setLoadMsg("✍️ A formatar briefing…");
+    const raw = await formatJSON(apiKey, rssContext, label);
+    rawDebug = raw;
+
+    if (!raw) throw new Error("API não devolveu resposta.");
+    const parsed = extractJSON(raw);
+    if (!parsed) throw new Error("JSON inválido. Ver debug abaixo.");
+
+    briefing = parsed;
+    renderBriefing();
+
+  } catch (err) {
+    $("err-msg").textContent = err.message;
+    if (rawDebug) {
+      $("debug-raw").textContent = rawDebug.slice(0, 3000);
+      $("debug-panel").style.display = "block";
+    }
+    showView("view-error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = briefing ? "↻ Atualizar" : "⚡ Gerar";
+  }
+}
+
+/* ── INIT ───────────────────────────────────────────────────── */
+document.addEventListener("DOMContentLoaded", () => {
+  $("hdr-date").textContent = todayLabel();
+  $("key-input").addEventListener("keydown", e => { if (e.key === "Enter") saveKey(); });
+  const key = localStorage.getItem("bd_key");
+  if (key) launchApp();
+  else $("setup-screen").style.display = "flex";
+});
+
+</script>
+</body>
+</html>

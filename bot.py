@@ -11,6 +11,8 @@ import sys
 import time
 from datetime import datetime
 
+import re
+
 import anthropic
 import feedparser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -124,7 +126,6 @@ def split_message(text: str, limit: int = 4000) -> list[str]:
     return parts
 
 def strip_html(text: str) -> str:
-    import re
     return re.sub(r"<[^>]+>", "", text or "").strip()
 
 # ── RSS FETCHING ──────────────────────────────────────────────
@@ -230,10 +231,13 @@ def format_messages(briefing: dict) -> list[str]:
             current = block
         else:
             current += block
-    current += footer if len(current + footer) <= LIMIT else ""
+    if len(current + footer) <= LIMIT:
+        current += footer
     msgs.append(current.strip())
-    if footer not in "".join(msgs):
-        msgs.append(footer.strip())
+    # Append footer as separate message if it didn't fit
+    footer_clean = footer.strip()
+    if not any(footer_clean in m for m in msgs):
+        msgs.append(footer_clean)
     return msgs
 
 def briefing_to_context(briefing: dict) -> str:

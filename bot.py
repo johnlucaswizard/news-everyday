@@ -178,17 +178,18 @@ Output ONLY valid JSON, nothing before {{ or after }}.
 {{"date":"{today}","headline":"A história mais importante do dia, em português","categories":[{{"id":"portugal","name":"Portugal & Política","emoji":"🇵🇹","items":[{{"title":"Título","summary":"3 frases em português: facto + contexto + consequência para alguém em Lisboa.","source":"Público","url":"https://link.com","importance":"high"}}]}},{{"id":"business","name":"Economia & Business","emoji":"💼","items":[]}},{{"id":"mundo","name":"Mundo & Geopolítica","emoji":"🌍","items":[]}},{{"id":"saude","name":"Saúde & Ciência","emoji":"🧬","items":[]}},{{"id":"tech","name":"Tech & IA","emoji":"🤖","items":[]}},{{"id":"desporto","name":"Desporto","emoji":"⚽","items":[]}}]}}
 
 Rules:
+- headline: max 120 characters, in Portuguese
 - 3-4 items per category
 - importance: high | medium | low
-- All summaries written in Portuguese (3 sentences each)
+- All summaries in Portuguese (2-3 sentences, concise)
 - Use real URLs from the headlines above
-- Output ONLY the JSON"""
+- Output ONLY the JSON, no other text"""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model=MODEL, max_tokens=3500,
+                model=MODEL, max_tokens=4096,
                 messages=[{"role":"user","content":prompt}],
             )
             text = response.content[0].text

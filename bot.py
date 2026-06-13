@@ -108,7 +108,85 @@ def extract_json(text: str) -> dict | None:
     if a != -1 and b > a:
         try: return json.loads(s[a:b+1])
         except Exception: pass
+    # Try removing trailing commas (common LLM mistake)
+    if a != -1:
+        candidate = s[a:]
+        cleaned = re.sub(r",\s*([\]}])", r"\1", candidate)
+        try: return json.loads(cleaned)
+        except Exception: pass
+        # Try repairing truncated JSON (cut off mid-object)
+        repaired = repair_truncated_json(cleaned)
+        if repaired:
+            try: return json.loads(repaired)
+            except Exception: pass
+        # Last resort: extract at least date/headline via regex so the
+        # briefing doesn't fail completely (empty categories is handled
+        # gracefully by format_messages).
+        date_m = re.search(r'"date"\s*:\s*"([^"]*)"', s)
+        head_m = re.search(r'"headline"\s*:\s*"([^"]*)"', s)
+        if date_m or head_m:
+            return {
+                "date": date_m.group(1) if date_m else today_label(),
+                "headline": head_m.group(1) if head_m else "Briefing diário",
+                "categories": [],
+            }
     return None
+
+def repair_truncated_json(s: str) -> str | None:
+    """
+    Tenta reparar JSON truncado a meio (max_tokens atingido):
+    encontra o último '}' válido e fecha os brackets/braces em aberto.
+    """
+    depth_stack = []
+    in_string = False
+    escape = False
+    last_safe_idx = -1
+
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            depth_stack.append(ch)
+        elif ch in "}]":
+            if depth_stack:
+                depth_stack.pop()
+            # Posição segura: fecho de objeto/array completo
+            if ch == "}" :
+                last_safe_idx = i
+
+    if last_safe_idx == -1 or not depth_stack:
+        return None  # nada para reparar ou já está balanceado
+
+    truncated = s[:last_safe_idx + 1]
+    # Recalcula stack até este ponto para saber o que falta fechar
+    stack2 = []
+    in_string = False
+    escape = False
+    for ch in truncated:
+        if escape:
+            escape = False; continue
+        if ch == "\\" and in_string:
+            escape = True; continue
+        if ch == '"':
+            in_string = not in_string; continue
+        if in_string:
+            continue
+        if ch in "{[":
+            stack2.append(ch)
+        elif ch in "}]":
+            if stack2: stack2.pop()
+
+    closers = "".join("]" if c == "[" else "}" for c in reversed(stack2))
+    return truncated + closers
 
 def is_admin(user_id: int) -> bool:
     return not ADMIN_TELEGRAM_ID or str(user_id) == ADMIN_TELEGRAM_ID.strip()
@@ -178,26 +256,40 @@ Output ONLY valid JSON, nothing before {{ or after }}.
 {{"date":"{today}","headline":"A história mais importante do dia, em português","categories":[{{"id":"portugal","name":"Portugal & Política","emoji":"🇵🇹","items":[{{"title":"Título","summary":"3 frases em português: facto + contexto + consequência para alguém em Lisboa.","source":"Público","url":"https://link.com","importance":"high"}}]}},{{"id":"business","name":"Economia & Business","emoji":"💼","items":[]}},{{"id":"mundo","name":"Mundo & Geopolítica","emoji":"🌍","items":[]}},{{"id":"saude","name":"Saúde & Ciência","emoji":"🧬","items":[]}},{{"id":"tech","name":"Tech & IA","emoji":"🤖","items":[]}},{{"id":"desporto","name":"Desporto","emoji":"⚽","items":[]}}]}}
 
 Rules:
-- headline: max 120 characters, in Portuguese
-- 3-4 items per category
+- headline: max 100 characters, in Portuguese
+- 3-4 items per category (24 items total max)
 - importance: high | medium | low
-- All summaries in Portuguese (2-3 sentences, concise)
+- summaries: 2 short sentences max, in Portuguese — be concise
+- titles: max 80 characters
 - Use real URLs from the headlines above
-- Output ONLY the JSON, no other text"""
+- Output ONLY the JSON, no other text, no markdown fences"""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model=MODEL, max_tokens=4096,
+                model=MODEL, max_tokens=8192,
                 messages=[{"role":"user","content":prompt}],
             )
             text = response.content[0].text
+            log.info(f"  Resposta: {len(text)} chars, stop_reason={response.stop_reason}")
+
             parsed = extract_json(text)
             if parsed:
                 log.info("  ✅ Briefing gerado com sucesso")
                 return parsed
-            raise RuntimeError(f"JSON inválido:\n{text[:200]}")
+
+            log.warning(f"  JSON inválido. stop_reason={response.stop_reason}")
+            log.warning(f"  Início: {text[:200]}")
+            log.warning(f"  Fim: {text[-200:]}")
+
+            if response.stop_reason == "max_tokens" and attempt < 2:
+                log.warning("  Resposta cortada por max_tokens — a tentar de novo com prompt mais curto...")
+                prompt = prompt.replace("3-4 items per category (24 items total max)", "2-3 items per category (18 items total max)")
+                prompt = prompt.replace("2 short sentences max", "1 short sentence max")
+                continue
+
+            raise RuntimeError(f"JSON inválido (stop_reason={response.stop_reason}):\n{text[:200]}...{text[-100:]}")
         except anthropic.RateLimitError:
             if attempt < 2:
                 log.warning(f"  Rate limit — aguardando 15s...")
@@ -212,19 +304,34 @@ IMP_DOT = {"high":"🔴","medium":"🟡","low":"⚪"}
 DIVIDER = "─" * 28
 
 def format_messages(briefing: dict) -> list[str]:
-    header = (f"📰 <b>BRIEFING DIÁRIO</b>\n<i>{briefing['date']}</i>\n"
-              f"{DIVIDER}\n<blockquote>{briefing['headline']}</blockquote>\n")
+    date     = briefing.get("date", today_label())
+    headline = briefing.get("headline", "Briefing diário")
+    cats     = briefing.get("categories", [])
+
+    header = (f"📰 <b>BRIEFING DIÁRIO</b>\n<i>{date}</i>\n"
+              f"{DIVIDER}\n<blockquote>{headline}</blockquote>\n")
     blocks, LIMIT = [], 4000
-    for cat in briefing["categories"]:
-        lines = [f"\n{cat['emoji']} <b>{cat['name'].upper()}</b>"]
-        for item in cat["items"]:
+    for cat in cats:
+        emoji = cat.get("emoji","📌")
+        name  = cat.get("name","Notícias")
+        items = cat.get("items", [])
+        if not items:
+            continue
+        lines = [f"\n{emoji} <b>{name.upper()}</b>"]
+        for item in items:
+            title   = item.get("title","")
+            summary = item.get("summary","")
+            if not title:
+                continue
             dot = IMP_DOT.get(item.get("importance","low"), "⚪")
             url = item.get("url","")
-            src = f'<a href="{url}">{item["source"]}</a>' if url else item["source"]
-            lines.append(f'{dot} <b>{item["title"]}</b>\n<i>{item["summary"]}</i>\n↗ {src}')
-        blocks.append("\n".join(lines))
+            source = item.get("source","")
+            src = f'<a href="{url}">{source}</a>' if url else source
+            lines.append(f'{dot} <b>{title}</b>\n<i>{summary}</i>\n↗ {src}')
+        if len(lines) > 1:  # has at least one item
+            blocks.append("\n".join(lines))
 
-    footer = f"\n{DIVIDER}\n⏰ <i>Gerado automaticamente · {briefing['date']}</i>"
+    footer = f"\n{DIVIDER}\n⏰ <i>Gerado automaticamente · {date}</i>"
     msgs, current = [], header
     for block in blocks:
         if len(current + block) > LIMIT:
@@ -242,11 +349,18 @@ def format_messages(briefing: dict) -> list[str]:
     return msgs
 
 def briefing_to_context(briefing: dict) -> str:
-    lines = [f"Briefing do dia {briefing['date']}:"]
-    for cat in briefing["categories"]:
-        lines.append(f"\n{cat['name']}:")
-        for item in cat["items"]:
-            lines.append(f"• {item['title']} — {item['summary']} (Fonte: {item['source']})")
+    lines = [f"Briefing do dia {briefing.get('date', today_label())}:"]
+    for cat in briefing.get("categories", []):
+        items = cat.get("items", [])
+        if not items:
+            continue
+        lines.append(f"\n{cat.get('name','Notícias')}:")
+        for item in items:
+            title   = item.get("title","")
+            summary = item.get("summary","")
+            source  = item.get("source","")
+            if title:
+                lines.append(f"• {title} — {summary} (Fonte: {source})")
     return "\n".join(lines)
 
 # ── BOT HANDLERS ──────────────────────────────────────────────
